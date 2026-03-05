@@ -1,0 +1,486 @@
+﻿<h2>Ollama Cloud ile Open Source LLM'leri Donanım Yükseltmeden Denemek (Yeni Başlayanlar İçin Ders Notu)</h2>
+
+<p>
+Open source büyük dil modelleri (LLM) dünyasında her gün yeni bir model ve yeni bir sürüm konuşuluyor. Bu çok iyi bir haber, çünkü artık “tek bir model”e
+mahkum değiliz. Ama pratikte çoğu kişi aynı iki probleme takılıyor: (1) Büyük modeller yerel GPU VRAM'ine sığmıyor, (2) Birden fazla modeli denemek için
+her seferinde devasa dosyalar indirmek, kurmak, silmek hem zaman hem de disk alanı tüketiyor. Kısacası, öğrenme ve deneme süreci daha en başta yorucu hale gelebiliyor.
+</p>
+
+<p>
+Ben bu eğitimi tam da bu yüzden hazırladım: Open source LLM'leri <strong>Bilgisayarınıza</strong> model dosyalarını indirip biriktirmeden de test edebilin.
+Üstelik sadece “çalıştırma” değil, doğru model seçimi ve uygulamaya entegrasyon mantığını da anlayın. Bu yazı, YouTube'daki eğitimimin blog formatında,
+ders notu kadar derinlemesine hazırlanmış versiyonu. Adım adım giderken, neden-sonuç ilişkisini de kurmaya çalışacağım.
+</p>
+
+<p>
+Eğitim videosu (YouTube canlı yayın kaydı):
+<a href="https://youtube.com/live/QEZ8oF4A68k" target="_blank">https://youtube.com/live/QEZ8oF4A68k</a>
+</p>
+
+<p>
+Kodlar ve dokümanlar (GitHub repo):
+<a href="https://github.com/kmkarakaya/OllamaCloud" target="_blank">https://github.com/kmkarakaya/OllamaCloud</a>
+</p>
+
+<h3>Bu Ders Notunu Nasıl Kullanmalısın?</h3>
+
+<p>
+Bu yazı iki tip okuyucu için tasarlandı:
+</p>
+
+<ul>
+  <li>LLM dünyasına yeni girenler: “Ben nereden başlayacağım, hangi kavramlar önemli?” diyenler.</li>
+  <li>Uygulama geliştirmek isteyenler: “Ben Python ile bir şey kurmak istiyorum, model denemeyi hızlı hale getirmek istiyorum.” diyenler.</li>
+</ul>
+
+<p>
+Benim önerim şu: Önce kavramları ve karar mantığını oku. Sonra CLI ile bir modeli çalıştır. Ardından API ve Python bölümüne geç. En sonda repodaki iki örneği
+(model karşılaştırma scripti ve Streamlit demo) çalıştırıp sonuçları yorumla. Bu sırayla ilerlersen, “ne yaptığını bilerek” ilerlemiş olursun.
+</p>
+
+<h3>Temel Kavramlar: Modeller Neden Ağır? (VRAM, RAM, Disk, Token)</h3>
+
+<p>
+Bir modelin “büyük” veya “ağır” olması tek bir şeye bağlı değil. Yeni başlayanların kafasını en çok karıştıran nokta da bu. Ben burada üç kaynak üzerinden anlatıyorum:
+<strong>Disk</strong>, <strong>RAM</strong> ve <strong>VRAM</strong>.
+</p>
+
+<ul>
+  <li><strong>Disk</strong>: Model dosyalarını indirip sakladığın yer. Birkaç model denemek bile onlarca GB yapabilir.</li>
+  <li><strong>RAM</strong>: CPU belleği. Bazı durumlarda (özellikle CPU ile çalışan senaryolarda) RAM sınırlayıcı olur.</li>
+  <li><strong>VRAM</strong>: GPU belleği. Büyük modellerin yerelde hızlı çalışmasında çoğu zaman asıl sınırlayıcı kaynak budur.</li>
+</ul>
+
+<p>
+Parametre sayısı arttıkça (örneğin 20B, 120B gibi) modelin kapasitesi artabilir, ama kaynak ihtiyacı da artar. Ancak tek mesele parametre sayısı değildir.
+Model çalışırken “KV cache” (kısaca bağlam belleği) de büyür. Bu cache, konuşma uzadıkça ve context window büyüdükçe artar. Bu yüzden “kısa bir soru” ile “uzun bir sohbet”
+aynı modelde farklı kaynak tüketimi üretebilir.
+</p>
+
+<p>
+Bir diğer kritik kavram: <strong>token</strong>. Modelin okuduğu ve ürettiği metin parçaları token'lara bölünür. Bir prompt ne kadar uzunsa, o kadar fazla token işlenir.
+Bir konuşma geçmişi ne kadar uzunsa, modelin “tek seferde düşünmesi” için o kadar fazla token taşınır. Bu hem süreyi (latency) hem de bellek ihtiyacını etkiler.
+Bu yüzden iyi bir pratik: Modeli değerlendirirken sadece tek bir prompt değil, farklı uzunluklarda promptlar denemek.
+</p>
+
+<p>
+Peki quantization (kuantizasyon) ne işe yarar? Çok basit anlatayım: Modeli daha düşük hassasiyetle temsil ederek daha az bellek kullanmasını sağlar.
+Bu sayede bazı modeller yerelde çalışabilir hale gelir. Ama bazen kalite ve tutarlılık üzerinde etkisi olabilir. Bu nedenle model seçimi yaparken “en büyük model en iyisidir” gibi
+basit bir kural yok. Senin senaryon için “yeterince iyi + yeterince hızlı + yönetilebilir maliyet” dengesi önemlidir.
+</p>
+
+<p>
+Bu noktada Ollama Cloud'un değeri ortaya çıkıyor: İndirme ve donanım bariyerini azaltıp, senin hızlıca öğrenme ve deneme yapmanı sağlıyor.
+Yani önce doğru modeli seçiyorsun, sonra yerel veya cloud stratejini buna göre planlıyorsun.
+</p>
+
+<h3>Ollama Cloud Nedir? (CLI ve API İki Yol)</h3>
+
+<p>
+Ollama Cloud, desteklenen modelleri cloud üzerinden çalıştırıp denemeni sağlayan bir altyapı. Senin tarafında iki “arayüz” var:
+<strong>Ollama CLI</strong> ve <strong>Ollama API</strong>. Benim ders notu yaklaşımımda bunlar iki farklı hedefe hizmet eder:
+</p>
+
+<ul>
+  <li><strong>CLI yolu</strong>: Hızlı deneme ve hızlı kıyaslama. Prompt yaz, cevap al, model davranışını gör.</li>
+  <li><strong>API yolu</strong>: Uygulama entegrasyonu. Python ile web app, bot, servis veya otomasyon kur.</li>
+</ul>
+
+<p>
+Resmi dokümanlar (okurken açık dursun):
+<a href="https://docs.ollama.com/cloud" target="_blank">https://docs.ollama.com/cloud</a>,
+<a href="https://docs.ollama.com/api" target="_blank">https://docs.ollama.com/api</a>
+</p>
+
+<p>
+Not: “Ücretsiz deneme” ve limitler dönemsel olarak değişebilir. En güncel bilgiyi resmi sayfalardan kontrol etmeni öneririm.
+</p>
+
+<h3>Ne Zaman Cloud, Ne Zaman Yerel?</h3>
+
+<p>
+Cloud ve yerel kullanım birbirinin alternatifi değil; çoğu zaman birbirini tamamlar. Ben pratikte şöyle karar veriyorum:
+</p>
+
+<ul>
+  <li><strong>Cloud-first</strong>: Model denemek, model seçmek, hızlı prototip yapmak, eğitim/demo üretmek.</li>
+  <li><strong>Local-first</strong>: Offline çalışma, çok sık istek, veri politikası nedeniyle tamamen yerel zorunluluk.</li>
+</ul>
+
+<p>
+Eğer amacın “hangi model işimi görür?” sorusunu cevaplamaksa cloud yaklaşımı büyük hız kazandırır. Modeli seçtikten sonra yerelde koşmak istiyorsan,
+o aşamada donanım yatırımı veya daha küçük/kuantize bir model seçimi mantıklı hale gelir. Yani benim için cloud çoğu zaman bir “hızlandırıcı katman”.
+</p>
+
+<h3>Model Deneme ve Karşılaştırma İçin Basit Bir Rubrik</h3>
+
+<p>
+Model denemek demek, aynı soruyu üç modele sormak demek değildir. Gerçek bir karşılaştırma yapmak için küçük bir rubrik gerekir.
+Benim kullandığım basit rubrik şu başlıklardan oluşur:
+</p>
+
+<ul>
+  <li><strong>Talimat takibi</strong>: “Şu formatta yaz” dediğimde uyuyor mu?</li>
+  <li><strong>Tutarlılık</strong>: Aynı soruyu tekrar sorunca benzer kalite veriyor mu?</li>
+  <li><strong>Yapı ve okunabilirlik</strong>: Cevap düzenli mi, maddeleme iyi mi?</li>
+  <li><strong>Doğruluk</strong>: Bariz hatalar yapıyor mu, uydurma eğilimi var mı?</li>
+  <li><strong>Hız</strong>: Aynı prompt için yanıt süresi kabul edilebilir mi?</li>
+  <li><strong>Dil uyumu</strong>: Türkçe sorularda Türkçe kalitesi yeterli mi?</li>
+</ul>
+
+<p>
+Bu rubriği kullanarak “model seçimi”ni hızlandırabilirsin. Örneğin eğitimde kullandığım yaklaşım: Aynı konuda 2-3 farklı prompt tipi hazırla,
+sonra her modeli bu prompt setiyle test et. Böylece tek bir cevaba göre karar vermezsin. Özellikle “format zorlayan” promptlar modelin talimat takibini çok net gösterir.
+</p>
+
+<p>
+Bu rubriği repodaki <code>compare_models.py</code> ile otomatikleştirmeye başladık. Script mükemmel bir benchmark değil, ama doğru düşünme biçimini öğretir:
+Önce yapılandırılmış görevler, sonra gerçek çıktı incelemesi.
+</p>
+
+<h3>Güvenlik ve İyi Pratikler: API Key ile Çalışmak</h3>
+
+<p>
+API key bir şifre gibi düşünülmeli. En sık yapılan hata, API key'i koda gömmek veya repo içinde paylaşmak. Benim önerim:
+API key'i bir ortam değişkeni olarak tanımla ve uygulamada oradan oku.
+</p>
+
+<p>
+Resmi yetkilendirme dokümanı:
+<a href="https://docs.ollama.com/api/authentication" target="_blank">https://docs.ollama.com/api/authentication</a>
+</p>
+
+<p>
+Windows PowerShell tarafında, geçerli oturum için örnek:
+</p>
+
+<pre><code>$env:OLLAMA_API_KEY = "your_api_key_here"</code></pre>
+
+<p>
+Bu şekilde key'i kaynak koduna yazmadan, hem CLI tarafında hem de Python tarafında kullanabilirsin. Eğitim içeriklerinde özellikle şunu vurguluyorum:
+Key yönetimi “küçük bir detay” değil; ileride üretim ortamına gittiğinde en kritik alışkanlıklardan biri olacak.
+</p>
+
+<h3>CLI ile Başlamak: İlk Deneme Akışı (Neden Bu Komutlar?)</h3>
+
+<p>
+Önce Ollama'nın Windows kurulumu gerekiyor. Resmi Windows kurulum sayfası:
+<a href="https://docs.ollama.com/windows" target="_blank">https://docs.ollama.com/windows</a>
+</p>
+
+<p>
+Kurulumdan sonra amaç şu: Cloud tarafına giriş yap ve bir modeli terminalde çalıştır. Temel akış:
+</p>
+
+<pre><code>ollama --version
+ollama signin
+ollama run gpt-oss:120b-cloud</code></pre>
+
+<p>
+Burada <code>ollama signin</code> kritik. Cloud erişimi gerektiren işlemlerde yerel CLI'nin kimlik doğrulamasını yapmış oluyorsun.
+Sonra <code>ollama run</code> ile modeli interaktif moda alıyorsun. Bu noktada önemli pratik: İlk denemelerde kısa promptlarla başla, sonra uzun promptlara geç.
+Çünkü uzun prompt, hem hız hem de bağlam yönetimi açısından modeli daha fazla zorlar.
+</p>
+
+<p>
+Bir diğer önemli not: Cloud model isimleri CLI tarafında bazen <code>-cloud</code> ekiyle gelir. API tarafında ise model adları farklı görünebilir.
+Bu yüzden ben API entegrasyonlarında “model adını hardcode etme” alışkanlığını bırakmanı öneriyorum. Bunun çözümü bir sonraki bölümde: <code>/api/tags</code>.
+</p>
+
+<h3>Direkt API Yolu: /api/tags ile Model Keşfi, /api/chat ile Cevap</h3>
+
+<p>
+Uygulama geliştireceksen API tarafı kritik. Ben burada iki endpointi “temel taş” gibi görüyorum:
+</p>
+
+<ul>
+  <li><strong>/api/tags</strong>: Hangi modeller erişilebilir? Bu sorunun cevabı.</li>
+  <li><strong>/api/chat</strong>: Mesaj gönderip cevap almak.</li>
+</ul>
+
+<p>
+Endpoint dokümanları:
+<a href="https://docs.ollama.com/api/tags" target="_blank">https://docs.ollama.com/api/tags</a>,
+<a href="https://docs.ollama.com/api/chat" target="_blank">https://docs.ollama.com/api/chat</a>
+</p>
+
+<p>
+Benim pratik yaklaşımım: Model adını “varsayma”. Önce <code>/api/tags</code> ile listeyi çek, sonra uygulamanda o listeden seçim yaptır.
+Bu sayede bir model erişilebilir değilse uygulama kırılmaz; sadece seçeneklerde görünmez.
+</p>
+
+<p>
+Minimal bir <code>curl</code> örneği (PowerShell’de):
+</p>
+
+<pre><code>curl https://ollama.com/api/tags `
+  -H "Authorization: Bearer $env:OLLAMA_API_KEY"</code></pre>
+
+<p>
+Chat tarafında <code>stream</code> parametresi önemli bir kavram. <code>stream=false</code> dersen tek seferde cevap alırsın.
+<code>stream=true</code> dersen cevap parça parça gelir. Web uygulamalarında stream kullanıcı deneyimini iyileştirir,
+ama kodu biraz daha dikkatli yazmayı gerektirir. Eğitimde ben önce <code>stream=false</code> ile mantığı kurup, sonra stream'e geçmeni öneriyorum.
+</p>
+
+<h3>Python ile Entegrasyon: Mantığı Bir Kez Kur, Her Yerde Kullan</h3>
+
+<p>
+Python tarafında benim önerim şu: Önce en küçük “çalışıyor mu?” prototipini kur. Sonra aynı mantığı web uygulamasına taşı.
+Ollama Cloud Python dokümanı burada:
+<a href="https://docs.ollama.com/cloud#python" target="_blank">https://docs.ollama.com/cloud#python</a>
+</p>
+
+<p>
+Kullandığımız Python paketi:
+<a href="https://github.com/ollama/ollama-python" target="_blank">https://github.com/ollama/ollama-python</a>
+</p>
+
+<p>
+Python tarafında temel fikir:
+</p>
+
+<ul>
+  <li>İstemciyi <code>host="https://ollama.com"</code> ile cloud'a yönlendir</li>
+  <li>Header'a <code>Authorization: Bearer ...</code> koy</li>
+  <li><code>chat()</code> çağrısında model ve mesajları gönder</li>
+</ul>
+
+<p>
+Minimal örnek:
+</p>
+
+<pre><code>import os
+from ollama import Client
+
+client = Client(
+    host="https://ollama.com",
+    headers={"Authorization": f"Bearer {os.environ['OLLAMA_API_KEY']}"},
+)
+
+resp = client.chat(
+    model="gpt-oss:120b",
+    messages=[{"role": "user", "content": "RAG nedir? 5 maddeyle anlat."}],
+    stream=False,
+)
+
+print(resp["message"]["content"])</code></pre>
+
+<p>
+Burada mesaj formatı çok önemli. Mesajlar bir liste ve her mesajın <code>role</code> alanı var (örneğin <code>user</code>).
+Gerçek uygulamada konuşma geçmişi tutarsın: Önceki mesajları da yeni promptla birlikte gönderirsin. Bu sayede model bağlamı “hatırlar”.
+Ama şu riski unutma: Konuşma geçmişi uzadıkça token sayısı artar; bu da gecikmeyi artırabilir. Bu yüzden pratik bir yöntem:
+Geçmişi sınırlamak veya kritik noktaları özetleyip “memory” gibi göndermek.
+</p>
+
+<p>
+Hata senaryolarını ders notu gibi düşünelim:
+</p>
+
+<ul>
+  <li><strong>401 Unauthorized</strong>: API key yanlış veya header formatı hatalı. İlk kontrol: ortam değişkeni + auth dokümanı.</li>
+  <li><strong>404 / model not found</strong>: Model adı erişilebilir değil; önce <code>/api/tags</code> ile listeyi kontrol et.</li>
+  <li><strong>Timeout/slow</strong>: Çok büyük model veya yoğunluk; daha küçük modelle dene, istekleri azalt, stream kullan.</li>
+</ul>
+
+<p>
+Bu üç hata tipi, pratikte en sık görülenler. Eğitimde de özellikle “önce tags, sonra chat” mantığını vurguluyorum.
+</p>
+
+<h3>Repo Walkthrough: İki Bağımsız Örnekle Öğrenmeyi Hızlandırmak</h3>
+
+<p>
+Eğitimi izleyip “tamam anladım” demek kolay. Asıl değer, iki örneği çalıştırıp sonuçları yorumlamakta.
+Repo içinde üç kritik dosya var: <strong>requirements.txt</strong>, <strong>compare_models.py</strong>, <strong>app.py</strong>.
+Bu üçü birlikte “deneme -> karşılaştırma -> demo” akışını tamamlıyor.
+</p>
+
+<p>
+Önce bağımlılıkları kurmak ve örnekleri çalıştırmak için pratik komutlar:
+</p>
+
+<pre><code>pip install -r requirements.txt
+python compare_models.py
+streamlit run app.py</code></pre>
+
+<p>
+Şimdi iki örneği tek tek ders notu gibi inceleyelim.
+</p>
+
+<p>
+<strong>compare_models.py</strong> ne yapıyor?
+Bu script “model seçimi” problemine pratik bir yaklaşım getiriyor. İçindeki iki yapı çok önemli:
+</p>
+
+<ul>
+  <li><strong>MODELS</strong>: Karşılaştırılacak model listesi (ör. gpt-oss:20b, gpt-oss:120b, qwen3-coder:480b)</li>
+  <li><strong>TASKS</strong>: Modelin cevap vermesini istediğin yapılandırılmış görevler</li>
+</ul>
+
+<p>
+Scriptin yaklaşımı şu: Her modele aynı görevleri sorar, yanıt süresini ölçer ve basit bir kalite skoru çıkarır.
+Bu skor bir hakem değil; bir “erken sinyal”. Skorun mantığı dosyada açık:
+</p>
+
+<ul>
+  <li>Anahtar kelime kapsama skoru (0-60): Görev için kritik kelimeleri geçiriyor mu?</li>
+  <li>Format skoru (0-40): Maddeleme var mı, satır sayısı makul mü, yanıt uzunluğu yeterli mi?</li>
+</ul>
+
+<p>
+Skorun amacı şu: Hızlıca “bu model talimatları takip ediyor mu?” sorusuna yaklaşmak. Ama karar verirken mutlaka raporu okuyacaksın.
+Script, tüm çıktıları <code>model_comparison_report.md</code> dosyasına yazar. Bu dosyayı açıp yanıtları yan yana okumak, gerçek kalite farkını görmenin en iyi yoludur.
+</p>
+
+<p>
+Bu scripti kendi senaryona uyarlamak için pratik öneriler:
+</p>
+
+<ul>
+  <li>Kendi işine uygun 3-5 görev ekle (Türkçe özetleme, kod üretimi, e-posta yazma, hata ayıklama vb.).</li>
+  <li>MODELS listesini <code>/api/tags</code> ile gördüğün erişilebilir modellere göre güncelle.</li>
+  <li>Skorun “tek ölçüt” olmadığını unutma; raporu mutlaka oku.</li>
+</ul>
+
+<p>
+Şimdi ikinci örnek: <strong>app.py</strong>.
+Bu dosya Streamlit ile basit bir web arayüzü kuruyor. Bu demo, özellikle öğrenme ve manuel test için çok değerli.
+Çünkü CLI'de hızlı denersin ama bazen promptları düzenlemek, farklı formatları denemek, çıktıyı kopyalayıp incelemek tarayıcıda daha rahattır.
+</p>
+
+<p>
+Uygulamanın akışı:
+</p>
+
+<ul>
+  <li>API key'i ortamdan alır veya kullanıcıdan ister.</li>
+  <li>Cloud'dan model listesini çeker ve seçim sunar.</li>
+  <li>Prompt gönderilir, cevap ekranda gösterilir.</li>
+</ul>
+
+<p>
+Bu yapının asıl öğretici tarafı şudur: Modeli “hardcode” etmek yerine listeden seçtirmek. Böylece erişilebilir modeller değişse bile uygulama dayanıklı olur.
+Bu, üretim sistemlerinde de çok işe yarayan bir alışkanlıktır.
+</p>
+
+<p>
+Uygulamayı geliştirmek istersen, başlangıç için birkaç fikir:
+</p>
+
+<ul>
+  <li>Konuşma geçmişi (chat history) ekle: Önceki mesajları saklayıp tekrar gönder.</li>
+  <li>Stream yanıt ekle: Cevap yazılıyor gibi görünsün.</li>
+  <li>Prompt şablonları ekle: “özetle / maddele / kod yaz” gibi hazır butonlar.</li>
+  <li>Çıktıyı kaydet: Prompt ve cevapları logla, sonra analiz et.</li>
+</ul>
+
+<h3>Sık Yapılan Hatalar ve Pratik Çözümler</h3>
+
+<p>
+Bu bölüm gerçek hayatın özeti: Hata alırsın ve çözersin. Ben en sık şunları görüyorum:
+</p>
+
+<ul>
+  <li>
+    <strong>401 Unauthorized</strong>:
+    API key yok, yanlış veya header formatı hatalı. Önce
+    <a href="https://docs.ollama.com/api/authentication" target="_blank">Authentication</a>
+    dokümanına bak, sonra ortam değişkenini kontrol et.
+  </li>
+  <li>
+    <strong>Model bulunamadı</strong>:
+    Model adı erişilebilir değil. İlk adım:
+    <a href="https://docs.ollama.com/api/tags" target="_blank">/api/tags</a>
+    ile modelleri listele ve doğru adı seç.
+  </li>
+  <li>
+    <strong>Çok yavaş yanıt</strong>:
+    Büyük model veya yoğunluk olabilir. Daha küçük model dene, promptu kısalt, stream kullanmayı düşün.
+  </li>
+  <li>
+    <strong>Virtualenv karışıklığı</strong>:
+    Farklı Python ortamına kurulum yapılıyor. En temiz yöntem: venv aç, sonra <code>pip install -r requirements.txt</code>.
+  </li>
+  <li>
+    <strong>Türkçe karakterler bozuk görünüyor</strong>:
+    Kopyalama yaparken HTML editör modu dışında yapıştırmış olabilirsin. Blogger'da HTML görünümünde yapıştırmak genelde en sorunsuz yoldur.
+  </li>
+</ul>
+
+<p>
+Bu hataların ortak mesajı şu: Önce bağlantı ve yetkiyi doğrula, sonra model listesini doğrula, en son uygulama kodunu kurcala.
+Bu sırayla ilerlemek zamandan tasarruf ettirir.
+</p>
+
+<h3>Mini Çalışma: Kendi Deneme Setini Oluştur</h3>
+
+<p>
+Bu yazıyı gerçekten değerli kılmak için sana küçük bir “ödev” seti bırakmak istiyorum. Eğer bir modeli seçmek istiyorsan, şu üç tip prompt hazırla:
+</p>
+
+<ul>
+  <li><strong>Format testi</strong>: “5 maddeyle anlat, her madde 1 cümle olsun” gibi.</li>
+  <li><strong>Akıl yürütme testi</strong>: “Adım adım açıkla” gibi.</li>
+  <li><strong>Senaryo testi</strong>: “Benim işim şu, bana bir taslak çıkar” gibi.</li>
+</ul>
+
+<p>
+Sonra aynı üç promptu üç farklı modelde dene. Karşılaştırma yaparken sadece “doğru mu?” diye bakma; rubriğe geri dön:
+Talimat takibi, tutarlılık, okunabilirlik ve hız. Bu küçük alışkanlık, öğrenme sürecini hızlandırır ve model seçimini daha sağlam yapar.
+</p>
+
+<h3>Benim Önerdiğim Deneme Stratejisi</h3>
+
+<p>
+Eğer bir proje için model seçeceksem ben genelde şu akışla ilerliyorum:
+</p>
+
+<ul>
+  <li>Önce 2-3 aday model belirlerim (biri hızlı/küçük, biri büyük/kaliteli, biri kod odaklı vb.).</li>
+  <li><code>compare_models.py</code> ile hızlı karşılaştırma yaparım.</li>
+  <li>Rapor dosyasından cevapları okur, talimat takibi ve tutarlılığa bakarım.</li>
+  <li>Seçtiğim 1-2 modeli <code>app.py</code> ile manuel prompt testine sokarım.</li>
+  <li>Sonra uygulama entegrasyonuna geçerim (Python client ile).</li>
+</ul>
+
+<p>
+Bu akışın güzelliği şu: Model seçimi “hissiyat” değil, kısa ama sistematik bir deneme sürecine dayanıyor. Üstelik bunu donanım yatırımı yapmadan başlatabiliyorsun.
+</p>
+
+<h3>Videoyu ve Kodları Burada Bulabilirsin</h3>
+
+<p>
+YouTube eğitim kaydı:
+<a href="https://youtube.com/live/QEZ8oF4A68k" target="_blank">https://youtube.com/live/QEZ8oF4A68k</a>
+</p>
+
+<p>
+GitHub repo (README ve örnek kodlar):
+<a href="https://github.com/kmkarakaya/OllamaCloud" target="_blank">https://github.com/kmkarakaya/OllamaCloud</a>
+</p>
+
+<p>
+Resmi kaynaklar:
+</p>
+
+<ul>
+  <li><a href="https://docs.ollama.com/cloud" target="_blank">Ollama Cloud</a></li>
+  <li><a href="https://docs.ollama.com/cloud#python" target="_blank">Ollama Cloud Python</a></li>
+  <li><a href="https://docs.ollama.com/windows" target="_blank">Ollama Windows</a></li>
+  <li><a href="https://docs.ollama.com/api" target="_blank">Ollama API</a></li>
+  <li><a href="https://docs.ollama.com/api/authentication" target="_blank">API Authentication</a></li>
+  <li><a href="https://docs.ollama.com/api/tags" target="_blank">API /tags</a></li>
+  <li><a href="https://docs.ollama.com/api/chat" target="_blank">API /chat</a></li>
+  <li><a href="https://github.com/ollama/ollama-python" target="_blank">ollama-python</a></li>
+</ul>
+
+<h3>Kapanış</h3>
+
+<p>
+Ben bu eğitimi, “donanımım yetmiyor” bahanesinin seni open source LLM denemekten uzaklaştırmaması için hazırladım. Ollama Cloud ile hem farklı modelleri
+hızlıca deneyebilir, hem de seçtiğin modeli Python tarafında gerçek bir uygulamaya bağlayabilirsin.
+</p>
+
+<p>
+Eğer sen de open source LLM'leri hızlıca denemek, karşılaştırma yapmak ve pratik bir akış kurmak istiyorsan videoyu izle, repo içindeki örnekleri çalıştır,
+sonra kendi senaryona uyarlayıp geliştirmeye başla. Benzer içerikler için <strong>Murat Karakaya Akademi</strong>'yi takip etmeyi unutma.
+</p>
