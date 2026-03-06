@@ -242,7 +242,7 @@ Bir diğer önemli not: bulut model isimleri CLI tarafında bazen <code>-cloud</
 Bu yüzden ben API entegrasyonlarında "model adını hardcode etme" alışkanlığını bırakmanı öneriyorum. Bunun çözümü bir sonraki bölümde: <code>/api/tags</code>.
 </p>
 
-<h3>Direkt API Yolu: /api/tags ile Model Keşfi, /api/sohbet ile Cevap</h3>
+<h3>Direkt API Yolu: /api/tags ile Model Keşfi, /api/chat ile Cevap</h3>
 
 <p>
 Uygulama geliştireceksen API tarafı kritik. Ben burada iki endpointi "temel taş" gibi görüyorum:
@@ -250,7 +250,7 @@ Uygulama geliştireceksen API tarafı kritik. Ben burada iki endpointi "temel ta
 
 <ul>
   <li><strong>/api/tags</strong>: Hangi modeller erişilebilir? Bu sorunun cevabı.</li>
-  <li><strong>/api/sohbet</strong>: Mesaj gönderip cevap almak.</li>
+  <li><strong>/api/chat</strong>: Mesaj gönderip cevap almak.</li>
 </ul>
 
 <p>
@@ -268,7 +268,7 @@ Bu sayede bir model erişilebilir değilse uygulama kırılmaz; sadece seçenekl
 Minimal bir <code>curl</code> örneği (PowerShell'de):
 </p>
 
-<pre><code>curl __URL_16__ `
+<pre><code>curl https://ollama.com/api/tags `
   -H "Authorization: Bearer $env:OLLAMA_API_KEY"</code></pre>
 
 <p>
@@ -295,7 +295,7 @@ Python tarafında temel fikir:
 </p>
 
 <ul>
-  <li>İstemciyi <code>host="__URL_21__"</code> ile bulut'a yönlendir</li>
+  <li>İstemciyi <code>host="https://ollama.com"</code> ile bulut'a yönlendir</li>
   <li>Header'a <code>Authorization: Bearer ...</code> koy</li>
   <li><code>chat()</code> çağrısında model ve mesajları gönder</li>
 </ul>
@@ -308,7 +308,7 @@ Minimal örnek:
 from ollama import Client
 
 client = Client(
-    host="__URL_22__",
+    host="https://ollama.com",
     headers={"Authorization": f"Bearer {os.environ['OLLAMA_API_KEY']}"},
 )
 
@@ -562,7 +562,7 @@ Resmi kaynaklar:
   <li><a href="https://docs.ollama.com/api" target="_blank">Ollama API</a></li>
   <li><a href="https://docs.ollama.com/api/authentication" target="_blank">API Authentication</a></li>
   <li><a href="https://docs.ollama.com/api/tags" target="_blank">API /tags</a></li>
-  <li><a href="https://docs.ollama.com/api/chat" target="_blank">API /sohbet</a></li>
+  <li><a href="https://docs.ollama.com/api/chat" target="_blank">API /chat</a></li>
   <li><a href="https://github.com/ollama/ollama-python" target="_blank">ollama-python</a></li>
 </ul>
 
